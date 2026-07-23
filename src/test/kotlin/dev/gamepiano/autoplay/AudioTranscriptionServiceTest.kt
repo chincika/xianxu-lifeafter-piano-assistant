@@ -22,6 +22,11 @@ class AudioTranscriptionServiceTest {
 
     @Test
     fun `audio modes expose stable worker arguments`() {
+        assertEquals("high-fidelity-vocals", AudioTranscriptionMode.HIGH_FIDELITY_VOCALS.argument)
+        assertEquals(
+            "high-fidelity-accompaniment",
+            AudioTranscriptionMode.HIGH_FIDELITY_ACCOMPANIMENT.argument,
+        )
         assertEquals("melody", AudioTranscriptionMode.MELODY_ONLY.argument)
         assertEquals("balanced", AudioTranscriptionMode.MELODY_WITH_CHORDS.argument)
         assertEquals("accompaniment", AudioTranscriptionMode.ACCOMPANIMENT_ONLY.argument)

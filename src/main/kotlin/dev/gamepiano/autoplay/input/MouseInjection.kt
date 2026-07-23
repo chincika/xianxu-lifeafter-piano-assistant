@@ -23,7 +23,7 @@ data class MouseSendResult(
 }
 
 fun interface MouseGateway {
-    fun click(point: ScreenPoint): MouseSendResult
+    fun click(windowHandle: Long, point: ScreenPoint, area: WindowClientArea): MouseSendResult
 }
 
 fun interface WindowClientAreaProvider {

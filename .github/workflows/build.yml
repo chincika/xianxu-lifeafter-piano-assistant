@@ -26,3 +26,6 @@ jobs:
 
       - name: Run tests
         run: .\gradlew.bat test
+
+      - name: Test audio transcription worker
+        run: python -m unittest discover -s src/test/python -p "test_*.py"

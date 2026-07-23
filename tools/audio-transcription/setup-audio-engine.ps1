@@ -30,7 +30,7 @@ Invoke-WebRequest -UseBasicParsing -Uri 'https://bootstrap.pypa.io/get-pip.py' -
 & $pythonExe $getPip --disable-pip-version-check
 if ($LASTEXITCODE -ne 0) { throw "get-pip failed with exit code $LASTEXITCODE" }
 
-& $pythonExe -m pip install --disable-pip-version-check --upgrade 'pip<27'
+& $pythonExe -m pip install --disable-pip-version-check --upgrade 'pip<27' 'setuptools<81'
 if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed with exit code $LASTEXITCODE" }
 
 & $pythonExe -m pip install --disable-pip-version-check 'basic-pitch==0.4.0'
@@ -52,4 +52,4 @@ if ($WithSeparation) {
 }
 
 Write-Host "Audio engine ready: $pythonExe"
-& $pythonExe -c "import importlib.util, basic_pitch; print('basic_pitch=ok demucs=' + ('ok' if importlib.util.find_spec('demucs') else 'missing'))"
+& $pythonExe -c "import importlib.util; from basic_pitch.inference import predict; print('basic_pitch=ok demucs=' + ('ok' if importlib.util.find_spec('demucs') else 'missing'))"

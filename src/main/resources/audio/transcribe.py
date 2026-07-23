@@ -7,6 +7,7 @@ import math
 import os
 import pathlib
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -23,30 +24,51 @@ class Note:
     role: str
 
 
+PIANO_LOWEST_MIDI = 21  # A0
+PIANO_HIGHEST_MIDI = 108  # C8
+
+
 def progress(message: str) -> None:
     print(f"PROGRESS {message}", flush=True)
 
 
-def predict_notes(audio_path: pathlib.Path, role: str) -> list[Note]:
+def predict_notes(audio_path: pathlib.Path, role: str, high_fidelity: bool = False) -> list[Note]:
     from basic_pitch.inference import predict
 
-    progress("正在识别主旋律" if role == "melody" else "正在识别伴奏音符")
-    onset = 0.48 if role == "melody" else 0.62
-    frame = 0.30 if role == "melody" else 0.42
-    minimum_length = 90.0 if role == "melody" else 130.0
+    if high_fidelity:
+        progress("正在进行 88 键高保真人声识别" if role == "melody" else "正在进行 88 键高保真伴奏识别")
+        # Favor pitch precision over aggressive recall: low thresholds turn
+        # upper harmonics in dense mixes into false piano notes.
+        onset = 0.50 if role == "melody" else 0.55
+        frame = 0.32 if role == "melody" else 0.35
+        minimum_length = 80.0
+        minimum_frequency = None
+        maximum_frequency = None
+    else:
+        progress("正在识别主旋律" if role == "melody" else "正在识别伴奏音符")
+        onset = 0.48 if role == "melody" else 0.62
+        frame = 0.30 if role == "melody" else 0.42
+        minimum_length = 90.0 if role == "melody" else 130.0
+        minimum_frequency = 82.0
+        maximum_frequency = 2094.0
     _, _, events = predict(
         str(audio_path),
         onset_threshold=onset,
         frame_threshold=frame,
         minimum_note_length=minimum_length,
-        minimum_frequency=82.0,
-        maximum_frequency=2094.0,
+        minimum_frequency=minimum_frequency,
+        maximum_frequency=maximum_frequency,
         multiple_pitch_bends=False,
     )
     return [
         Note(float(start), float(end), int(pitch), float(amplitude), role)
         for start, end, pitch, amplitude, _ in events
-        if end > start and 0 <= pitch <= 127
+        if end > start
+        and (
+            PIANO_LOWEST_MIDI <= pitch <= PIANO_HIGHEST_MIDI
+            if high_fidelity
+            else 0 <= pitch <= 127
+        )
     ]
 
 
@@ -189,15 +211,87 @@ def deduplicate(notes: Iterable[Note]) -> list[Note]:
     return output
 
 
+def preserve_high_fidelity_polyphony(notes: Iterable[Note]) -> list[Note]:
+    """Keep full timing/polyphony while merging cross-stem duplicates."""
+    output: list[Note] = []
+    for note in sorted(notes, key=lambda value: (value.start, value.pitch, -value.amplitude)):
+        if not PIANO_LOWEST_MIDI <= note.pitch <= PIANO_HIGHEST_MIDI:
+            continue
+        duplicate_index = next(
+            (
+                index
+                for index in range(len(output) - 1, max(-1, len(output) - 33), -1)
+                if output[index].pitch == note.pitch
+                and abs(output[index].start - note.start) <= 0.035
+            ),
+            None,
+        )
+        if duplicate_index is None:
+            output.append(note)
+            continue
+
+        existing = output[duplicate_index]
+        role = "melody" if "melody" in (existing.role, note.role) else existing.role
+        output[duplicate_index] = Note(
+            start=min(existing.start, note.start),
+            end=max(existing.end, note.end),
+            pitch=note.pitch,
+            amplitude=max(existing.amplitude, note.amplitude),
+            role=role,
+        )
+    return sorted(output, key=lambda value: (value.start, value.pitch))
+
+
+def clean_high_fidelity_accompaniment(notes: Iterable[Note]) -> list[Note]:
+    polyphony = preserve_high_fidelity_polyphony(notes)
+    harmonic_intervals = {12, 19, 24}
+    without_parallel_harmonics = [
+        candidate
+        for candidate in polyphony
+        if not any(
+            candidate.pitch - fundamental.pitch in harmonic_intervals
+            and abs(candidate.start - fundamental.start) <= 0.055
+            and min(candidate.end, fundamental.end) > max(candidate.start, fundamental.start)
+            and fundamental.amplitude >= candidate.amplitude * 0.75
+            for fundamental in polyphony
+            if fundamental.pitch < candidate.pitch
+        )
+    ]
+    cleaned: list[Note] = []
+    for candidate in without_parallel_harmonics:
+        nearby_lower_pitches = [
+            neighbour.pitch
+            for neighbour in without_parallel_harmonics
+            if neighbour is not candidate
+            and neighbour.pitch < candidate.pitch
+            and abs(neighbour.start - candidate.start) <= 0.8
+        ]
+        weak_isolated_high_note = (
+            bool(nearby_lower_pitches)
+            and candidate.pitch - statistics.median(nearby_lower_pitches) >= 12
+            and candidate.amplitude < 0.62
+        )
+        if not weak_isolated_high_note:
+            cleaned.append(candidate)
+    return cleaned
+
+
 def write_midi(path: pathlib.Path, bpm: float, notes: list[Note]) -> None:
     import pretty_midi
 
     midi = pretty_midi.PrettyMIDI(initial_tempo=bpm)
     melody = pretty_midi.Instrument(program=0, name="Main melody")
     accompaniment = pretty_midi.Instrument(program=0, name="Simplified accompaniment")
+    detailed = pretty_midi.Instrument(program=0, name="88-key high-fidelity transcription")
     for note in notes:
         velocity = int(max(35, min(112, round(note.amplitude * 115))))
-        target = melody if note.role == "melody" else accompaniment
+        target = (
+            melody
+            if note.role == "melody"
+            else accompaniment
+            if note.role == "accompaniment"
+            else detailed
+        )
         target.notes.append(
             pretty_midi.Note(
                 velocity=velocity,
@@ -210,6 +304,8 @@ def write_midi(path: pathlib.Path, bpm: float, notes: list[Note]) -> None:
         midi.instruments.append(melody)
     if accompaniment.notes:
         midi.instruments.append(accompaniment)
+    if detailed.notes:
+        midi.instruments.append(detailed)
     path.parent.mkdir(parents=True, exist_ok=True)
     midi.write(str(path))
 
@@ -218,27 +314,51 @@ def transcribe(input_path: pathlib.Path, output_path: pathlib.Path, mode: str) -
     bpm, beats, _ = estimate_beats(input_path)
     half_beats = subdivision_grid(beats)
     with tempfile.TemporaryDirectory(prefix="game-piano-audio-") as temporary:
-        separated = separate(input_path, pathlib.Path(temporary))
-        used_separation = separated is not None
-
-        if separated is None:
-            full_events = predict_notes(input_path, "melody")
-            melody = melody_line(full_events, half_beats)
-            accompaniment = accompaniment_pulses(full_events, beats)
-        else:
+        if mode in ("high-fidelity-vocals", "high-fidelity-accompaniment"):
+            separated = separate(input_path, pathlib.Path(temporary))
+            if separated is None:
+                raise RuntimeError(
+                    "88 键人声/伴奏模式需要人声分离组件，请使用 Full 版或安装带人声分离的音频组件"
+                )
+            used_separation = True
             vocal_path, accompaniment_path = separated
-            melody = melody_line(predict_notes(vocal_path, "melody"), half_beats)
-            accompaniment = accompaniment_pulses(
-                predict_notes(accompaniment_path, "accompaniment"),
-                beats,
-            )
-
-        if mode == "melody":
-            selected = melody
-        elif mode == "accompaniment":
-            selected = accompaniment
+            if mode == "high-fidelity-vocals":
+                # Vocals are normally monophonic. Keep their original timing,
+                # but select only one fundamental per onset group to suppress
+                # harmonics detected as extra piano notes.
+                selected = melody_line(
+                    predict_notes(vocal_path, "melody", high_fidelity=True),
+                    grid=[],
+                )
+            else:
+                selected = clean_high_fidelity_accompaniment(
+                    predict_notes(
+                        accompaniment_path,
+                        "high-fidelity",
+                        high_fidelity=True,
+                    )
+                )
         else:
-            selected = deduplicate([*melody, *accompaniment])
+            separated = separate(input_path, pathlib.Path(temporary))
+            used_separation = separated is not None
+            if separated is None:
+                full_events = predict_notes(input_path, "melody")
+                melody = melody_line(full_events, half_beats)
+                accompaniment = accompaniment_pulses(full_events, beats)
+            else:
+                vocal_path, accompaniment_path = separated
+                melody = melody_line(predict_notes(vocal_path, "melody"), half_beats)
+                accompaniment = accompaniment_pulses(
+                    predict_notes(accompaniment_path, "accompaniment"),
+                    beats,
+                )
+
+            if mode == "melody":
+                selected = melody
+            elif mode == "accompaniment":
+                selected = accompaniment
+            else:
+                selected = deduplicate([*melody, *accompaniment])
 
         if not selected:
             raise RuntimeError("没有识别到可用音符，请尝试更清晰的音频或其他模式")
@@ -249,6 +369,12 @@ def transcribe(input_path: pathlib.Path, output_path: pathlib.Path, mode: str) -
             "notes": len(selected),
             "bpm": round(bpm, 2),
             "separated": used_separation,
+            "mode": mode,
+            "range": (
+                "A0-C8"
+                if mode in ("high-fidelity-vocals", "high-fidelity-accompaniment")
+                else "game-simplified"
+            ),
         }
 
 
@@ -256,7 +382,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Transcribe song audio into a game-oriented MIDI arrangement")
     parser.add_argument("--input", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
-    parser.add_argument("--mode", choices=("melody", "balanced", "accompaniment"), default="balanced")
+    parser.add_argument(
+        "--mode",
+        choices=(
+            "high-fidelity-vocals",
+            "high-fidelity-accompaniment",
+            "melody",
+            "balanced",
+            "accompaniment",
+        ),
+        default="balanced",
+    )
     arguments = parser.parse_args()
     if not arguments.input.is_file():
         raise FileNotFoundError(arguments.input)

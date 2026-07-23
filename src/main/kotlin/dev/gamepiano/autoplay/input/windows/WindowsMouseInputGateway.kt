@@ -53,7 +53,11 @@ private interface User32ClientCoordinates : StdCallLibrary {
 
 /** Moves the real cursor and submits a left click through Win32 SendInput. */
 class WindowsMouseInputGateway : MouseGateway {
-    override fun click(point: ScreenPoint): MouseSendResult {
+    override fun click(
+        windowHandle: Long,
+        point: ScreenPoint,
+        area: WindowClientArea,
+    ): MouseSendResult {
         if (!Platform.isWindows()) return MouseSendResult(0, EXPECTED_INPUTS, ERROR_NOT_SUPPORTED)
         val virtualLeft = User32.INSTANCE.GetSystemMetrics(SM_XVIRTUALSCREEN)
         val virtualTop = User32.INSTANCE.GetSystemMetrics(SM_YVIRTUALSCREEN)

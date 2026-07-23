@@ -4,15 +4,21 @@ import dev.gamepiano.autoplay.adapter.LifeAfterPianoProfile
 import dev.gamepiano.autoplay.application.SongPlanService
 import dev.gamepiano.autoplay.audio.AudioTranscriptionMode
 import dev.gamepiano.autoplay.audio.AudioTranscriptionService
+import dev.gamepiano.autoplay.input.Piano88MouseInputSink
 import dev.gamepiano.autoplay.input.ScanCodeInputSink
 import dev.gamepiano.autoplay.input.windows.ForegroundTarget
+import dev.gamepiano.autoplay.input.windows.WindowsClientAreaProvider
 import dev.gamepiano.autoplay.input.windows.WindowsEmergencyStopMonitor
 import dev.gamepiano.autoplay.input.windows.WindowsForegroundGuard
 import dev.gamepiano.autoplay.input.windows.WindowsForegroundWindowInspector
+import dev.gamepiano.autoplay.input.windows.WindowsMouseInputGateway
 import dev.gamepiano.autoplay.input.windows.WindowsSendInputGateway
+import dev.gamepiano.autoplay.input.windows.WindowsWindowMessageMouseGateway
 import dev.gamepiano.autoplay.midi.ExampleMidiGenerator
 import dev.gamepiano.autoplay.model.GameToneRange
+import dev.gamepiano.autoplay.model.MouseInputMode
 import dev.gamepiano.autoplay.model.PerformanceMode
+import dev.gamepiano.autoplay.playback.InputSink
 import dev.gamepiano.autoplay.playback.PlaybackEngine
 import dev.gamepiano.autoplay.playback.PlaybackOptions
 import dev.gamepiano.autoplay.ui.launchDesktopApp
@@ -54,10 +60,16 @@ fun main(args: Array<String>) {
         val audioPath = args.getOrNull(1)?.let(Path::of)
             ?: error("--transcribe-audio requires an audio file path")
         val mode = when (args.getOrNull(2)?.lowercase() ?: "balanced") {
+            "high-fidelity-vocals", "hifi-vocals" -> AudioTranscriptionMode.HIGH_FIDELITY_VOCALS
+            "high-fidelity-accompaniment", "high-fidelity-88", "high-fidelity", "hifi88" ->
+                AudioTranscriptionMode.HIGH_FIDELITY_ACCOMPANIMENT
             "melody" -> AudioTranscriptionMode.MELODY_ONLY
             "balanced" -> AudioTranscriptionMode.MELODY_WITH_CHORDS
             "accompaniment" -> AudioTranscriptionMode.ACCOMPANIMENT_ONLY
-            else -> error("Audio mode must be melody, balanced, or accompaniment")
+            else -> error(
+                "Audio mode must be high-fidelity-vocals, high-fidelity-accompaniment, " +
+                    "melody, balanced, or accompaniment",
+            )
         }
         AudioTranscriptionService().use { service ->
             val availability = service.availability()
@@ -115,7 +127,18 @@ fun main(args: Array<String>) {
         }
     }
 
-    val sink = ScanCodeInputSink(WindowsSendInputGateway(), guard)
+    val sink: InputSink = when (options.performanceMode) {
+        PerformanceMode.KEYBOARD_23 -> ScanCodeInputSink(WindowsSendInputGateway(), guard)
+        PerformanceMode.PIANO_88_MOUSE -> Piano88MouseInputSink(
+            inspector = inspector,
+            target = target,
+            gateway = when (options.mouseInputMode) {
+                MouseInputMode.SEND_INPUT -> WindowsMouseInputGateway()
+                MouseInputMode.WINDOW_MESSAGE_EXPERIMENTAL -> WindowsWindowMessageMouseGateway()
+            },
+            areaProvider = WindowsClientAreaProvider(),
+        )
+    }
     val engine = PlaybackEngine()
     val shutdownHook = Thread({
         engine.stop()
@@ -154,6 +177,7 @@ private data class CliOptions(
     val countdownSeconds: Int,
     val tapDurationMillis: Long,
     val performanceMode: PerformanceMode,
+    val mouseInputMode: MouseInputMode,
 )
 
 private fun parseOptions(args: Array<String>): CliOptions {
@@ -172,6 +196,7 @@ private fun parseOptions(args: Array<String>): CliOptions {
     var countdownSeconds = 3
     var tapDurationMillis = 0L
     var performanceMode = PerformanceMode.KEYBOARD_23
+    var mouseInputMode = MouseInputMode.SEND_INPUT
 
     while (index < args.size) {
         val argument = args[index++]
@@ -194,6 +219,13 @@ private fun parseOptions(args: Array<String>): CliOptions {
                     else -> error("Input mode must be keyboard23 or mouse88")
                 }
             }
+            argument.startsWith("--mouse-input=") -> {
+                mouseInputMode = when (argument.substringAfter('=').lowercase()) {
+                    "sendinput" -> MouseInputMode.SEND_INPUT
+                    "window-message" -> MouseInputMode.WINDOW_MESSAGE_EXPERIMENTAL
+                    else -> error("Mouse input mode must be sendinput or window-message")
+                }
+            }
             else -> error("Unknown argument: $argument")
         }
     }
@@ -213,6 +245,7 @@ private fun parseOptions(args: Array<String>): CliOptions {
         countdownSeconds = countdownSeconds,
         tapDurationMillis = tapDurationMillis,
         performanceMode = performanceMode,
+        mouseInputMode = mouseInputMode,
     )
 }
 
@@ -221,10 +254,14 @@ private fun printUsage() {
     println("Dry run: gradlew run --args='<song.mid> [G1|G2|G3|G4|G5|G6]'")
     println(
         "Play: gradlew run --args='<song.mid> G3 --play " +
-            "--process=Game.exe [--input=keyboard23|mouse88] [--title=Game] [--countdown=3] [--tap-ms=0]'",
+            "--process=Game.exe [--input=keyboard23|mouse88] " +
+            "[--mouse-input=sendinput|window-message] [--title=Game] [--countdown=3] [--tap-ms=0]'",
     )
     println("Inspect the current target: gradlew run --args='--inspect-window'")
     println("Generate a test score: gradlew run --args='--generate-example [output.mid]'")
-    println("Transcribe audio: gradlew run --args='--transcribe-audio <song.mp3> [melody|balanced|accompaniment]'")
+    println(
+        "Transcribe audio: gradlew run --args='--transcribe-audio <song.mp3> " +
+            "[high-fidelity-vocals|high-fidelity-accompaniment|melody|balanced|accompaniment]'",
+    )
     println("Real input is only enabled with --play and a matching foreground target. F8 stops playback.")
 }

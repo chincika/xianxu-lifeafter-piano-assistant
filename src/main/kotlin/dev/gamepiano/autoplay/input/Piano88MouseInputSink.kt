@@ -60,7 +60,11 @@ class Piano88MouseInputSink(
             require(key.index in 0 until Piano88Layout.KEY_COUNT) {
                 "88-key mouse index must be in 0..${Piano88Layout.KEY_COUNT - 1}: ${key.index}"
             }
-            val result = gateway.click(Piano88MouseGeometry.pointForKey(key.index, area))
+            val result = gateway.click(
+                windowHandle = window.handle,
+                point = Piano88MouseGeometry.pointForKey(key.index, area),
+                area = area,
+            )
             if (!result.successful) {
                 val error = result.nativeErrorCode?.let { ", Win32 error=$it" }.orEmpty()
                 throw MouseInjectionException(

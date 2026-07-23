@@ -9,6 +9,8 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.nameWithoutExtension
 
 enum class AudioTranscriptionMode(val argument: String) {
+    HIGH_FIDELITY_VOCALS("high-fidelity-vocals"),
+    HIGH_FIDELITY_ACCOMPANIMENT("high-fidelity-accompaniment"),
     MELODY_ONLY("melody"),
     MELODY_WITH_CHORDS("balanced"),
     ACCOMPANIMENT_ONLY("accompaniment"),
@@ -174,7 +176,7 @@ class AudioTranscriptionService(
     private fun runProbe(python: String): ProbeResult {
         val code = """
             import importlib.util, os, pathlib, sys
-            import basic_pitch
+            from basic_pitch.inference import predict
             root = pathlib.Path(sys.executable).resolve().parent / 'ffmpeg'
             bins = [item.parent for item in root.glob('**/avcodec-62.dll')] if root.is_dir() else []
             if bins:

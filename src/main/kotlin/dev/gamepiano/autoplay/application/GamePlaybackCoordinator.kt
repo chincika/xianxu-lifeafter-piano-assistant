@@ -13,6 +13,8 @@ import dev.gamepiano.autoplay.input.windows.WindowsForegroundWindowInspector
 import dev.gamepiano.autoplay.input.windows.WindowsClientAreaProvider
 import dev.gamepiano.autoplay.input.windows.WindowsMouseInputGateway
 import dev.gamepiano.autoplay.input.windows.WindowsSendInputGateway
+import dev.gamepiano.autoplay.input.windows.WindowsWindowMessageMouseGateway
+import dev.gamepiano.autoplay.model.MouseInputMode
 import dev.gamepiano.autoplay.model.PerformanceMode
 import dev.gamepiano.autoplay.playback.InputSink
 import dev.gamepiano.autoplay.playback.PlaybackEngine
@@ -32,6 +34,7 @@ class GamePlaybackCoordinator(
     private val inspector: ForegroundWindowInspector = WindowsForegroundWindowInspector(),
     private val gatewayFactory: () -> KeyboardGateway = ::WindowsSendInputGateway,
     private val mouseGatewayFactory: () -> MouseGateway = ::WindowsMouseInputGateway,
+    private val windowMessageMouseGatewayFactory: () -> MouseGateway = ::WindowsWindowMessageMouseGateway,
     private val clientAreaProviderFactory: () -> WindowClientAreaProvider = ::WindowsClientAreaProvider,
     private val emergencyStopFactory: ((() -> Unit) -> AutoCloseable) = { onStop ->
         WindowsEmergencyStopMonitor(onStop = onStop).start()
@@ -52,6 +55,7 @@ class GamePlaybackCoordinator(
         plan: SongPlan,
         target: ForegroundTarget,
         tapDurationMillis: Long,
+        mouseInputMode: MouseInputMode = MouseInputMode.SEND_INPUT,
         countdownSeconds: Int = 3,
         onStatus: (PlaybackStatus) -> Unit,
     ) {
@@ -63,7 +67,7 @@ class GamePlaybackCoordinator(
             check(playbackThread?.isAlive != true) { "Playback is already running" }
             cancellationRequested = false
             val thread = Thread({
-                runSession(plan, target, tapDurationMillis, countdownSeconds, onStatus)
+                runSession(plan, target, tapDurationMillis, mouseInputMode, countdownSeconds, onStatus)
             }, "game-piano-playback")
             playbackThread = thread
             thread.start()
@@ -79,6 +83,7 @@ class GamePlaybackCoordinator(
         plan: SongPlan,
         target: ForegroundTarget,
         tapDurationMillis: Long,
+        mouseInputMode: MouseInputMode,
         countdownSeconds: Int,
         onStatus: (PlaybackStatus) -> Unit,
     ) {
@@ -103,7 +108,10 @@ class GamePlaybackCoordinator(
                 PerformanceMode.PIANO_88_MOUSE -> Piano88MouseInputSink(
                     inspector = inspector,
                     target = target,
-                    gateway = mouseGatewayFactory(),
+                    gateway = when (mouseInputMode) {
+                        MouseInputMode.SEND_INPUT -> mouseGatewayFactory()
+                        MouseInputMode.WINDOW_MESSAGE_EXPERIMENTAL -> windowMessageMouseGatewayFactory()
+                    },
                     areaProvider = clientAreaProviderFactory(),
                 )
             }

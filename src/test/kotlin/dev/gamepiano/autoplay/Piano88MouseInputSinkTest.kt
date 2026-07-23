@@ -30,7 +30,9 @@ class Piano88MouseInputSinkTest {
         val sink = Piano88MouseInputSink(
             inspector = fixedInspector(),
             target = ForegroundTarget(processName = "lifeafter.exe"),
-            gateway = MouseGateway { point ->
+            gateway = MouseGateway { handle, point, area ->
+                assertEquals(42L, handle)
+                assertEquals(fullHdReference, area)
                 clicked += point
                 MouseSendResult(sent = 3, expected = 3)
             },

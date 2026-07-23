@@ -69,6 +69,7 @@ import dev.gamepiano.autoplay.input.windows.ForegroundTarget
 import dev.gamepiano.autoplay.input.windows.ForegroundWindowSnapshot
 import dev.gamepiano.autoplay.input.windows.WindowsForegroundWindowInspector
 import dev.gamepiano.autoplay.model.GameToneRange
+import dev.gamepiano.autoplay.model.MouseInputMode
 import dev.gamepiano.autoplay.model.PerformanceMode
 import dev.gamepiano.autoplay.model.Piano23Layout
 import dev.gamepiano.autoplay.model.RangeCalibration
@@ -87,7 +88,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-private const val APP_VERSION = "0.1.0-beta.2"
+private const val APP_VERSION = "0.1.0-beta.3"
 
 fun launchDesktopApp() = application {
     val windowState = rememberWindowState(width = 1_180.dp, height = 780.dp)
@@ -122,6 +123,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
     var range by remember { mutableStateOf(GameToneRange.G3) }
     var g3LowestMidi by remember { mutableIntStateOf(54) }
     var tapDurationMillis by remember { mutableLongStateOf(0L) }
+    var mouseInputMode by remember { mutableStateOf(MouseInputMode.SEND_INPUT) }
     var processName by remember { mutableStateOf("lifeafter.exe") }
     var titleContains by remember { mutableStateOf("") }
     var foregroundWindow by remember { mutableStateOf<ForegroundWindowSnapshot?>(null) }
@@ -398,6 +400,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
                 plan = playbackPlan,
                 target = target,
                 tapDurationMillis = tapDurationMillis,
+                mouseInputMode = mouseInputMode,
                 countdownSeconds = 3,
             ) { status ->
                 EventQueue.invokeLater {
@@ -528,6 +531,15 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
                         onCalibrationChange = ::updateCalibration,
                         tapDurationMillis = tapDurationMillis,
                         onTapDurationChange = { tapDurationMillis = it },
+                        mouseInputMode = mouseInputMode,
+                        onMouseInputModeChange = {
+                            mouseInputMode = it
+                            message = when (it) {
+                                MouseInputMode.SEND_INPUT -> "已使用兼容点击；演奏时系统光标会移动"
+                                MouseInputMode.WINDOW_MESSAGE_EXPERIMENTAL ->
+                                    "已使用实验性窗口消息；光标不移动，但游戏可能不接收点击"
+                            }
+                        },
                         processName = processName,
                         onProcessNameChange = { processName = it },
                         titleContains = titleContains,
@@ -920,7 +932,7 @@ private fun SongCard(
     onChooseMidi: () -> Unit,
     onChooseAudio: () -> Unit,
 ) {
-    WorkbenchSurface(Modifier.fillMaxWidth().height(154.dp)) {
+    WorkbenchSurface(Modifier.fillMaxWidth().height(176.dp)) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
@@ -957,7 +969,7 @@ private fun SongCard(
                 Spacer(Modifier.width(10.dp))
                 SongActionButton("导入 MIDI", enabled = !busy, onClick = onChooseMidi)
                 Spacer(Modifier.width(8.dp))
-                SongActionButton("音频转谱", enabled = !busy, onClick = onChooseAudio)
+                SongActionButton("音频转谱（测试）", enabled = !busy, onClick = onChooseAudio)
             }
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -972,6 +984,21 @@ private fun SongCard(
                     )
                     Spacer(Modifier.width(6.dp))
                 }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "测试功能",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WorkbenchColors.Warning,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "机械转谱仅用于初步编配，原生 MIDI 通常更准确",
+                    fontSize = 9.sp,
+                    color = WorkbenchColors.TextMuted,
+                )
                 Spacer(Modifier.weight(1f))
                 Text(
                     when {
@@ -1243,6 +1270,8 @@ private fun ControlDeck(
     onCalibrationChange: (Int) -> Unit,
     tapDurationMillis: Long,
     onTapDurationChange: (Long) -> Unit,
+    mouseInputMode: MouseInputMode,
+    onMouseInputModeChange: (MouseInputMode) -> Unit,
     processName: String,
     onProcessNameChange: (String) -> Unit,
     titleContains: String,
@@ -1336,11 +1365,31 @@ private fun ControlDeck(
                 } else {
                     Spacer(Modifier.height(18.dp))
                     Text("鼠标触发", fontSize = 12.sp, color = WorkbenchColors.TextMuted)
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        MouseInputMode.entries.forEach { mode ->
+                            ChoiceChip(
+                                text = mode.displayName(),
+                                selected = mouseInputMode == mode,
+                                enabled = !playing,
+                                onClick = { onMouseInputModeChange(mode) },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(7.dp))
                     Text(
-                        "使用 SendInput 即时点击；演奏期间鼠标会随音符移动",
+                        when (mouseInputMode) {
+                            MouseInputMode.SEND_INPUT ->
+                                "兼容性更高；演奏期间系统光标会随音符移动"
+                            MouseInputMode.WINDOW_MESSAGE_EXPERIMENTAL ->
+                                "实验功能 · 光标不移动；若游戏无声音，请切回兼容点击"
+                        },
                         fontSize = 10.sp,
-                        color = WorkbenchColors.TextPrimary,
+                        color = if (mouseInputMode == MouseInputMode.SEND_INPUT) {
+                            WorkbenchColors.TextPrimary
+                        } else {
+                            WorkbenchColors.Warning
+                        },
                     )
                 }
 
@@ -1570,6 +1619,8 @@ private fun chooseNativeFile(owner: AwtWindow, title: String, extensions: Set<St
 }
 
 private fun AudioTranscriptionMode.displayName(): String = when (this) {
+    AudioTranscriptionMode.HIGH_FIDELITY_VOCALS -> "88键·人声"
+    AudioTranscriptionMode.HIGH_FIDELITY_ACCOMPANIMENT -> "88键·伴奏"
     AudioTranscriptionMode.MELODY_ONLY -> "人声主旋律"
     AudioTranscriptionMode.MELODY_WITH_CHORDS -> "主旋律＋和弦"
     AudioTranscriptionMode.ACCOMPANIMENT_ONLY -> "纯伴奏"
@@ -1583,6 +1634,11 @@ private fun PreviewMode.displayName(): String = when (this) {
 private fun PerformanceMode.displayName(): String = when (this) {
     PerformanceMode.PIANO_88_MOUSE -> "88 键鼠标（推荐）"
     PerformanceMode.KEYBOARD_23 -> "23 键键盘"
+}
+
+private fun MouseInputMode.displayName(): String = when (this) {
+    MouseInputMode.SEND_INPUT -> "兼容点击（光标移动）"
+    MouseInputMode.WINDOW_MESSAGE_EXPERIMENTAL -> "窗口消息（实验·光标静止）"
 }
 
 private fun PlaybackStatus.userMessage(): String = when (this) {
