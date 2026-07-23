@@ -1,6 +1,12 @@
-*.zip
-*.exe
-*.msi
-*.sha256
-assets/
+.gradle/
+.kotlin/
+.idea/
+**/build/
+release/artifacts/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
 
+# Local research inputs and generated reverse-engineering output are never published.
+reference/

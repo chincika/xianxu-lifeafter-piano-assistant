@@ -1,5 +1,7 @@
 # Third-party notices
 
+弦序自身从 `v0.1.0-beta.2` 起采用 GNU GPLv3 发布。本文件仅说明随源码或二进制使用的第三方组件；这些组件仍由各自许可证管理。
+
 The Windows application package includes unmodified runtime libraries and their embedded license metadata, including:
 
 - Eclipse Temurin / OpenJDK 21 — GPLv2 with the Classpath Exception. The packaged runtime retains its `runtime/legal` notices.
