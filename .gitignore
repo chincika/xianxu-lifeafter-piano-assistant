@@ -1,0 +1,6 @@
+*.zip
+*.exe
+*.msi
+*.sha256
+assets/
+
