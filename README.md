@@ -1,88 +1,100 @@
 # 弦序——明日之后钢琴助手
 
-专为《明日之后》Windows 版 23/88 键钢琴适配的乐器辅助工具。它可以读取 MIDI，也可以在本地把常见音乐文件转换为简化乐谱，并在目标游戏位于前台时按计划发送键盘或鼠标输入。
+一个面向游戏内乐器的学习型自动演奏项目。当前同时支持游戏的 88 键通用钢琴界面，以及带 `G1` 至 `G6` 六个音区的 23 键快捷键界面。
 
-> 当前为测试版，不代表产品最终效果。程序内容仅供学习交流，所有艺术作品版权归属原作者所有。
-> 
-> 自动演奏依赖的向游戏客户端发送鼠标和键盘指令的行为可能被游戏开发商检测为异常，因此带来的游戏账号违规风险由用户自行承担。
-## 主要功能
+当前阶段已经实现桌面工作台、离线核心和受前台保护的 Windows 输入：
 
-- 支持 MIDI、MP3、WAV、FLAC、M4A 和 OGG；
-- 原始 MIDI 与“游戏映射”双模式试听；
-- 播放、暂停、停止和进度定位；
-- 获取乐谱入口与外部 MIDI 使用教程；
-- 88 键 A0–C8 原音高鼠标映射，并提供不移动光标的窗口消息实验模式；
-- 88 键 A0–C8 人声/伴奏分轨转谱，不再重新混合两个来源；
-- 23 键映射与 G1–G6 音区切换；
-- 自动推荐更合适的音区，并统计八度折叠；
-- 可选的人声分离、旋律提取、伴奏转谱和游戏简化编配；
-- 前台窗口保护与 F8 紧急停止。
+- Win11 Fluent/Mica 风格的 Compose Desktop 工作台，提供跟随系统、深色、浅色三种主题；
+- 钢琴主题应用图标已覆盖窗口左上角、任务栏、程序文件与安装包；
+- 本地音频转 MIDI，支持 88 键·人声、88 键·伴奏及三种游戏简化模式；
+- 文件选择、乐谱统计、88 键原音高直映、23 键兼容映射和 G1–G6 切换；
+- 本地 MIDI 音乐库：记住用户指定的文件夹、递归扫描子目录和搜索选曲；上一首、下一首、列表循环与可选的完成后自动下一首集中在“演奏”主界面的播放队列中；
+- “获取乐谱”入口：开放曲库、外部网站与第三方脚本教程均在系统浏览器中打开；
+- 可选的原始 MIDI 本机试听；试听不会向游戏发送输入；
+- 88 键鼠标演奏将 MIDI 21–108 一一映射到 A0–C8，不做逐音符八度折叠；默认使用不移动系统光标的窗口消息模式，遇到游戏版本不接收时可切换到移动光标的 `SendInput` 兼容模式；
+- 游戏演奏以可拖动进度条为主界面；支持暂停/继续、演奏中拖动定位、停止后保留断点；
+- 进度区会依据当前 MIDI 的真实触发密度显示动态节奏灯，而不是固定装饰波形；
+- 可按需打开迷你演奏窗口，并独立选择是否始终置顶；悬浮窗复用同一套进度、拖动、暂停和停止状态；
+- 可在界面中校准 G3 的最低音，并自动推导 G1/G2/G4/G5/G6；
+- 自动分析乐谱并推荐折叠较少、位置更居中的音区；
+- 读取标准 MIDI 文件；
+- 保留音符开始时间、时长、力度、轨道和通道；
+- 把 MIDI 音符投影到 23 个连续半音键；
+- 支持丢弃或八度折叠超出音域的音符；
+- 将 2ms 内的音符合并成和弦批次；
+- 使用单调时钟生成短触发播放计划；
+- 桌面端必须先导入有效 MIDI，且目标游戏回到前台后才发送键盘或鼠标输入；
+- 命令行默认只打印演奏计划，使用 `--play` 时才调用 Win32 `SendInput`；
+- 每次触发前检查目标游戏仍是前台窗口；切到其他窗口时冻结时间轴并停止发送，切回游戏后自动从断点继续，F8 可紧急停止。
+- 首次启动必须确认自动输入风险声明；可随时从“帮助 → 用户协议与隐私声明”重新阅读。
+- 乐谱准备好后可在游戏前台按 F7 开始演奏；演奏期间按 F9 暂停或继续，按 F8 紧急停止。暂停时间不会计入乐谱时间轴。
 
-## 下载与运行
+## 当前假设
 
-1. 在仓库右侧的 **Releases** 页面选择一个版本：
-   - `GamePianoAutoplay-*-lite-windows-x64.zip`：约 85 MiB，适合已经有 MIDI 的用户；
-   - `GamePianoAutoplay-*-full-windows-x64.zip`：约 560 MiB，内置音频转谱、人声分离模型和 FFmpeg，解压即用（解压后约 1.41 GiB）。
-2. 完整解压 ZIP；不要只把 EXE 单独复制出来。
-3. 运行 `GamePianoAutoplay.exe`。程序已经包含 Java 运行环境，无需另装 JDK。
-4. 导入 MIDI 或音乐文件，先使用“游戏映射”试听确认效果。
-5. 填写目标游戏进程名。开始演奏后，在三秒倒计时内切回游戏。
+88 键模式要求先在游戏中打开“通用模式”的完整钢琴键盘。点击位置按照游戏客户区实时缩放，基准画面为 2048×1152；为保证准确度，建议使用与截图一致的 16:9 全屏或无边框窗口。
 
-支持 Windows 10/11 x64。程序目前没有数字签名，首次运行时 Windows 可能显示安全提醒；请只从本仓库的 Releases 下载，并核对 SHA-256。
+23 键兼容模式从左到右为：
 
-> 音频自动转谱属于测试功能，只适合作为初步编配。机械识别可能出现漏音和误音，通常不如人工制作或原生 MIDI；请先试听再用于游戏演奏。
+```text
+1 Q 2 W 3 E R 5 T 6 Y U 7 I 8 O 9 P [ - ] = /
+```
 
-## 从源码构建
+暂定中央 G3 的最低键为 MIDI 54（F#3），因此 `R` 对应 MIDI 60（中央 C）；相邻音区暂按一组八度推导。这是待实际录音校准的假设，不会写死在解析器中。
 
-需要 JDK 21。Windows 下运行：
+## 运行
 
 ```powershell
+$env:JAVA_HOME='你的 JDK 21 目录'
 .\gradlew.bat test
 .\gradlew.bat run
+```
+
+不带参数会打开桌面工作台。导入 MIDI 后可选择“88 键鼠标（推荐）”或“23 键键盘”，按需试听原始 MIDI、拖动演奏起点并填写目标游戏进程；点击“开始演奏”会从进度条位置开始并倒计时 3 秒，用于切回游戏。演奏过程中拖动进度条会先安全暂停输入，松手后从新位置继续。
+
+生成无需安装的 Windows 可运行目录：
+
+```powershell
 .\gradlew.bat createPortableAppImage
 ```
 
-便携目录会生成到 `build\portable\GamePianoAutoplay\`。`build/`、模型、音频运行时和 Release ZIP 不进入 Git 历史。
+输出位于 `build\portable\GamePianoAutoplay\`。MSI 安装包仍可通过 Compose 的 `packageMsi` 任务生成，但需要本机具备 WiX 或能够下载 WiX。
 
-## 获取乐谱
-
-点击工作台顶部的“获取乐谱”可访问开放授权曲库、MidiShow 和第三方用户脚本项目。外部页面均在系统默认浏览器中打开；弦序不会安装或运行脚本，也不会读取浏览器账号、Cookie 或访问记录。
-
-具体步骤和来源边界见 [GETTING-MIDI.md](GETTING-MIDI.md)。
-
-## Lite 版可选：安装音频转谱组件
-
-Full 版不需要安装 Python 或下载模型。Lite 版的 MIDI 导入和演奏无需额外安装；若后来需要 MP3/WAV 等音频转谱，可联网安装本地模型：
+命令行模式仍然保留：
 
 ```powershell
-PowerShell -ExecutionPolicy Bypass -File .\tools\audio-transcription\setup-audio-engine.ps1
+.\gradlew.bat run --args='--generate-example examples\twinkle-twinkle.mid'
+.\gradlew.bat run --args='--transcribe-audio C:\Music\song.mp3 high-fidelity-vocals'
+.\gradlew.bat run --args='--transcribe-audio C:\Music\song.mp3 high-fidelity-accompaniment'
+.\gradlew.bat run --args='--transcribe-audio C:\Music\song.mp3 balanced'
+.\gradlew.bat run --args='C:\path\song.mid G3'
+.\gradlew.bat run --args='--inspect-window'
+.\gradlew.bat run --args='C:\path\song.mid G3 --play --process=lifeafter.exe --countdown=3 --tap-ms=0'
+.\gradlew.bat run --args='C:\path\song.mid G3 --play --process=lifeafter.exe --input=mouse88 --mouse-input=window-message'
 ```
 
-若需要人声分离：
+## 本地音频转谱组件
+
+音频模型使用独立 Python 3.10 运行时，不修改系统 Python。首次使用前执行：
 
 ```powershell
-PowerShell -ExecutionPolicy Bypass -File .\tools\audio-transcription\setup-audio-engine.ps1 -WithSeparation
+.\tools\audio-transcription\setup-audio-engine.ps1 -WithSeparation
 ```
 
-安装器会把独立 Python 环境和模型放在 `%LOCALAPPDATA%\GamePianoAutoplay\audio-runtime`。Full 版则直接使用程序目录中的 `audio-runtime`。音频处理在本机完成，不会上传音乐文件。带人声分离的版本体积较大，请预留足够磁盘空间。
+基础音符识别使用 Basic Pitch；安装 `-WithSeparation` 后会先用 Demucs 分离人声和伴奏。`88 键·人声` 仅保留人声主线并抑制泛音重复，`88 键·伴奏` 仅识别去除人声后的伴奏多声部，并过滤弱高次泛音与局部音域中的孤立弱高音；二者均覆盖 A0–C8，且不会重新混合。其他三种模式继续生成更适合 23 键演奏的简化编配。生成的 MIDI 保存在原音频旁的 `game-midi` 目录。整套处理在本机完成，不上传音乐文件。
 
-## 当前限制
+> 音频自动转谱目前是测试功能，只适合作为初步编配素材。复杂混音、现场录音和强混响音乐可能出现漏音或误音，效果通常不如人工制作或原生 MIDI；演奏前应先试听并自行确认。
 
-- 仅支持 Windows x64；
-- 88 键模式要求游戏打开完整钢琴“通用模式”，目前按 16:9 客户区布局适配；
-- 88 键兼容点击会移动鼠标；窗口消息实验模式不移动光标，但游戏可能不接收；
-- 23 键模式固定为当前键盘布局；
-- G3 最低音暂按 MIDI 54（F#3）校准，相邻 G1–G6 暂按一个八度推导；
-- 不同地区或版本的游戏进程名可能不同，需要在界面中修改；
-- 音频自动转谱不是人工扒谱，复杂混音可能需要调整或重新制作 MIDI；
-- 自动输入是否允许取决于游戏当前规则，使用者需要自行确认并承担相关风险。
+命令行真实输入必须同时提供 `--play` 和 `--process=<游戏进程名>` 或
+`--title=<窗口标题片段>`。桌面版在乐谱准备好后可按 F7 开始；一旦焦点切离游戏，程序会释放当前输入、冻结演奏进度并进入“切屏等待”，切回游戏后自动从原位置继续，不会追赶等待期间的音符。手动停止会保留当前断点，再次开始默认续弹；也可以在进度条上另选起点。按 F9 可暂停或继续，按 F8 可停止播放。
 
-## 反馈问题
+软件会向游戏发送自动输入，可能被游戏或反作弊系统识别为异常行为。首次打开桌面程序时必须确认协议，否则程序退出；完整文本见[用户协议与隐私声明](docs/risk-disclaimer.md)。
 
-提交 Issue 时请提供：程序版本、Windows 版本、游戏版本/地区、所选音区、错误提示，以及能否用示例 MIDI 复现。请勿上传包含版权音乐、账号信息或其他个人数据的文件。
+详细设计见 [docs/architecture.md](docs/architecture.md)，Windows 输入说明见
+[docs/windows-input.md](docs/windows-input.md)，获取 MIDI 的入口和使用边界见
+[docs/getting-midi.md](docs/getting-midi.md)。
 
-## 开源许可与第三方组件
+## 开源许可
 
 Copyright © 2026 chincika。
 
-弦序从 `v0.1.0-beta.2` 起采用 [GNU GPLv3](LICENSE) 发布。第三方组件和 Full 版音频运行时仍采用各自许可证，详见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+弦序从 `v0.1.0-beta.2` 起以 GNU GPLv3 发布。你可以查看、修改和再发布源码；发布修改版或对应二进制时，需要遵守 GPLv3 并提供相应源码。第三方组件仍采用各自的许可证。

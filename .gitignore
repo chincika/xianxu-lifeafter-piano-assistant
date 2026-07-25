@@ -3,6 +3,9 @@
 .idea/
 **/build/
 release/artifacts/
+release/review/
+release/github-repository/
+release/PUBLISHING-CHECKLIST.md
 __pycache__/
 *.pyc
 *.pyo
@@ -10,3 +13,4 @@ __pycache__/
 
 # Local research inputs and generated reverse-engineering output are never published.
 reference/
+docs/reverse-engineering-notes.md

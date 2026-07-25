@@ -25,8 +25,11 @@ data class SongPlan(
     val projection: ProjectionResult,
     val batches: List<KeyBatch>,
     val performanceMode: PerformanceMode = PerformanceMode.KEYBOARD_23,
+    val playbackStartMicros: Long = 0L,
 ) {
     val playable: Boolean = batches.isNotEmpty()
+    val remainingDurationMicros: Long
+        get() = (score.durationMicros - playbackStartMicros).coerceAtLeast(0L)
 
     /** Creates a plan whose first event starts immediately at the selected song position. */
     fun startingAt(positionMicros: Long): SongPlan {
@@ -36,6 +39,7 @@ data class SongPlan(
                 .filter { it.atMicros >= start }
                 .map { it.copy(atMicros = it.atMicros - start) }
                 .toList(),
+            playbackStartMicros = start,
         )
     }
 }

@@ -57,6 +57,8 @@ class SongRangeAnalysisTest {
         val section = plan.startingAt(1_250_000)
 
         assertTrue(section.playable)
+        assertEquals(1_250_000L, section.playbackStartMicros)
+        assertEquals(2_750_000L, section.remainingDurationMicros)
         assertEquals(listOf(750_000L, 2_250_000L), section.batches.map { it.atMicros })
         assertFalse(plan.startingAt(4_000_000).playable)
     }

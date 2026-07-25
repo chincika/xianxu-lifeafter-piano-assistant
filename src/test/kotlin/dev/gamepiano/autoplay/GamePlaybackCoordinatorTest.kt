@@ -26,12 +26,66 @@ import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class GamePlaybackCoordinatorTest {
+    @Test
+    fun `F9 callback pauses and resumes the active session`() {
+        var togglePause: (() -> Unit)? = null
+        val statuses = CopyOnWriteArrayList<PlaybackStatus>()
+        val terminal = CountDownLatch(1)
+        val coordinator = GamePlaybackCoordinator(
+            inspector = fixedInspector("lifeafter.exe", "明日之后"),
+            gatewayFactory = {
+                KeyboardGateway { strokes -> KeyboardSendResult(strokes.size, strokes.size) }
+            },
+            hotkeyMonitorFactory = { _, onTogglePause ->
+                togglePause = onTogglePause
+                AutoCloseable {}
+            },
+        )
+        val base = playablePlan()
+        val delayedPlan = base.copy(
+            batches = listOf(
+                base.batches.single(),
+                KeyBatch(5_000_000, listOf(Piano23Layout.keyAt(1))),
+            ),
+        )
+
+        coordinator.start(
+            plan = delayedPlan,
+            target = ForegroundTarget(processName = "lifeafter.exe", titleContains = "明日之后"),
+            tapDurationMillis = 0,
+            countdownSeconds = 0,
+        ) { status ->
+            statuses += status
+            if (status is PlaybackStatus.Stopped) terminal.countDown()
+        }
+        assertTrue(waitUntil { statuses.any { it is PlaybackStatus.Playing } })
+
+        requireNotNull(togglePause).invoke()
+        assertTrue(waitUntil { statuses.any { it is PlaybackStatus.Paused } })
+        requireNotNull(togglePause).invoke()
+        assertTrue(waitUntil { statuses.count { it is PlaybackStatus.Playing } >= 2 })
+
+        coordinator.stop()
+        assertTrue(terminal.await(2, TimeUnit.SECONDS))
+        val compactStatuses = statuses.fold(mutableListOf<PlaybackStatus>()) { result, status ->
+            if (result.lastOrNull()?.javaClass != status.javaClass) result += status
+            result
+        }
+        assertEquals(4, compactStatuses.size)
+        assertIs<PlaybackStatus.Playing>(compactStatuses[0])
+        assertIs<PlaybackStatus.Paused>(compactStatuses[1])
+        assertIs<PlaybackStatus.Playing>(compactStatuses[2])
+        assertIs<PlaybackStatus.Stopped>(compactStatuses[3])
+        coordinator.close()
+    }
+
     @Test
     fun `sends a zero-duration tap only after the foreground target matches`() {
         val sent = CopyOnWriteArrayList<List<ScanCodeStroke>>()
@@ -42,13 +96,13 @@ class GamePlaybackCoordinatorTest {
         val coordinator = GamePlaybackCoordinator(
             inspector = fixedInspector("lifeafter.exe", "明日之后"),
             gatewayFactory = { gateway },
-            emergencyStopFactory = { AutoCloseable {} },
+            hotkeyMonitorFactory = { _, _ -> AutoCloseable {} },
         )
 
         val statuses = runSession(coordinator)
 
-        assertIs<PlaybackStatus.Playing>(statuses[0])
-        assertIs<PlaybackStatus.Completed>(statuses[1])
+        assertIs<PlaybackStatus.Playing>(statuses.first())
+        assertIs<PlaybackStatus.Completed>(statuses.last())
         assertEquals(1, sent.size)
         assertEquals(
             listOf(ScanCodeAction.DOWN, ScanCodeAction.UP),
@@ -58,22 +112,60 @@ class GamePlaybackCoordinatorTest {
     }
 
     @Test
-    fun `rejects playback when another window is in the foreground`() {
-        var gatewayCreated = false
+    fun `waits for the target window and resumes from the same playback point`() {
+        val foreground = AtomicReference(
+            ForegroundWindowSnapshot(
+                handle = 9,
+                processId = 10,
+                processName = "explorer.exe",
+                title = "Documents",
+            ),
+        )
+        val sent = CopyOnWriteArrayList<List<ScanCodeStroke>>()
+        val statuses = CopyOnWriteArrayList<PlaybackStatus>()
+        val progress = CopyOnWriteArrayList<Long>()
+        val terminal = CountDownLatch(1)
         val coordinator = GamePlaybackCoordinator(
-            inspector = fixedInspector("explorer.exe", "Documents"),
+            inspector = ForegroundWindowInspector { foreground.get() },
             gatewayFactory = {
-                gatewayCreated = true
-                KeyboardGateway { strokes -> KeyboardSendResult(strokes.size, strokes.size) }
+                KeyboardGateway { strokes ->
+                    sent += strokes
+                    KeyboardSendResult(strokes.size, strokes.size)
+                }
             },
-            emergencyStopFactory = { AutoCloseable {} },
+            hotkeyMonitorFactory = { _, _ -> AutoCloseable {} },
         )
 
-        val statuses = runSession(coordinator)
+        coordinator.start(
+            plan = playablePlan(),
+            target = ForegroundTarget(processName = "lifeafter.exe", titleContains = "明日之后"),
+            tapDurationMillis = 0,
+            countdownSeconds = 0,
+            onProgress = { progress += it.positionMicros },
+        ) { status ->
+            statuses += status
+            if (status is PlaybackStatus.Completed || status is PlaybackStatus.Failed) {
+                terminal.countDown()
+            }
+        }
 
-        val failure = assertIs<PlaybackStatus.Failed>(statuses.single())
-        assertTrue(failure.message.contains("Foreground window mismatch"))
-        assertEquals(false, gatewayCreated)
+        assertTrue(waitUntil { statuses.any { it is PlaybackStatus.WaitingForTarget } })
+        Thread.sleep(120)
+        assertTrue(sent.isEmpty(), "No input may be sent while the game is not in the foreground")
+        assertTrue(progress.maxOrNull() == 0L, "Playback progress must stay frozen while waiting")
+
+        foreground.set(
+            ForegroundWindowSnapshot(
+                handle = 1,
+                processId = 2,
+                processName = "lifeafter.exe",
+                title = "明日之后",
+            ),
+        )
+        assertTrue(terminal.await(2, TimeUnit.SECONDS), "Playback did not resume after the game returned")
+        assertTrue(statuses.any { it is PlaybackStatus.Playing })
+        assertIs<PlaybackStatus.Completed>(statuses.last())
+        assertEquals(1, sent.size)
         coordinator.close()
     }
 
@@ -96,7 +188,7 @@ class GamePlaybackCoordinatorTest {
             clientAreaProviderFactory = {
                 WindowClientAreaProvider { WindowClientArea(0, 0, 2_048, 1_152) }
             },
-            emergencyStopFactory = { AutoCloseable {} },
+            hotkeyMonitorFactory = { _, _ -> AutoCloseable {} },
         )
 
         val statuses = runSession(
@@ -168,4 +260,13 @@ class GamePlaybackCoordinatorTest {
                 title = title,
             )
         }
+
+    private fun waitUntil(timeoutMillis: Long = 2_000, condition: () -> Boolean): Boolean {
+        val deadline = System.nanoTime() + timeoutMillis * 1_000_000
+        while (System.nanoTime() < deadline) {
+            if (condition()) return true
+            Thread.sleep(10)
+        }
+        return condition()
+    }
 }

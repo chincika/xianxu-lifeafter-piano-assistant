@@ -8,10 +8,10 @@ import dev.gamepiano.autoplay.input.Piano88MouseInputSink
 import dev.gamepiano.autoplay.input.ScanCodeInputSink
 import dev.gamepiano.autoplay.input.windows.ForegroundTarget
 import dev.gamepiano.autoplay.input.windows.WindowsClientAreaProvider
-import dev.gamepiano.autoplay.input.windows.WindowsEmergencyStopMonitor
 import dev.gamepiano.autoplay.input.windows.WindowsForegroundGuard
 import dev.gamepiano.autoplay.input.windows.WindowsForegroundWindowInspector
 import dev.gamepiano.autoplay.input.windows.WindowsMouseInputGateway
+import dev.gamepiano.autoplay.input.windows.WindowsPlaybackHotkeyMonitor
 import dev.gamepiano.autoplay.input.windows.WindowsSendInputGateway
 import dev.gamepiano.autoplay.input.windows.WindowsWindowMessageMouseGateway
 import dev.gamepiano.autoplay.midi.ExampleMidiGenerator
@@ -146,13 +146,25 @@ fun main(args: Array<String>) {
     }, "game-piano-shutdown-release")
     Runtime.getRuntime().addShutdownHook(shutdownHook)
 
-    val stopMonitor = WindowsEmergencyStopMonitor {
-        println("F8 emergency stop requested.")
-        engine.stop()
-    }.start()
+    val hotkeyMonitor = WindowsPlaybackHotkeyMonitor(
+        onStop = {
+            println("F8 emergency stop requested.")
+            engine.stop()
+        },
+        onTogglePause = {
+            when (engine.togglePaused()) {
+                true -> {
+                    runCatching(sink::releaseAll)
+                    println("Playback paused. Press F9 to resume.")
+                }
+                false -> println("Playback resumed.")
+                null -> Unit
+            }
+        },
+    ).start()
 
     try {
-        println("Playback started. Keep the target game in front; press F8 to stop.")
+        println("Playback started. Keep the target game in front; press F9 to pause/resume or F8 to stop.")
         val report = engine.play(
             plan.batches,
             sink,
@@ -163,7 +175,7 @@ fun main(args: Array<String>) {
                 "late-dropped=${report.droppedLateBatches}, cancelled=${report.cancelled}",
         )
     } finally {
-        stopMonitor.close()
+        hotkeyMonitor.close()
         runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
     }
 }
@@ -195,8 +207,8 @@ private fun parseOptions(args: Array<String>): CliOptions {
     var titleContains: String? = null
     var countdownSeconds = 3
     var tapDurationMillis = 0L
-    var performanceMode = PerformanceMode.KEYBOARD_23
-    var mouseInputMode = MouseInputMode.SEND_INPUT
+    var performanceMode = PerformanceMode.PIANO_88_MOUSE
+    var mouseInputMode = MouseInputMode.WINDOW_MESSAGE_EXPERIMENTAL
 
     while (index < args.size) {
         val argument = args[index++]
@@ -263,5 +275,8 @@ private fun printUsage() {
         "Transcribe audio: gradlew run --args='--transcribe-audio <song.mp3> " +
             "[high-fidelity-vocals|high-fidelity-accompaniment|melody|balanced|accompaniment]'",
     )
-    println("Real input is only enabled with --play and a matching foreground target. F8 stops playback.")
+    println(
+        "Real input is only enabled with --play and a matching foreground target. " +
+            "F9 pauses/resumes and F8 stops playback.",
+    )
 }

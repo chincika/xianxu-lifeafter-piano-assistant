@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "dev.gamepiano"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.5"
 
 repositories {
     google()
@@ -56,6 +56,7 @@ tasks.register<Exec>("createPortableAppImage") {
         "--app-version", "0.1.0",
         "--vendor", "Game Piano Learning Project",
         "--description", "LifeAfter 23/88-key MIDI autoplay workstation",
+        "--icon", file("src/main/resources/icons/xianxu.ico").absolutePath,
     )
 }
 
@@ -68,6 +69,9 @@ compose.desktop {
             packageVersion = "0.1.0"
             description = "明日之后 23/88 键乐器 MIDI 自动演奏工具"
             vendor = "Game Piano Learning Project"
+            windows {
+                iconFile.set(project.file("src/main/resources/icons/xianxu.ico"))
+            }
         }
     }
 }

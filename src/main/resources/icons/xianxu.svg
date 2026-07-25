@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">弦序应用图标</title>
+  <defs>
+    <linearGradient id="brand" x1="78" y1="54" x2="434" y2="458" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#5B5DF7"/>
+    </linearGradient>
+  </defs>
+  <rect x="28" y="28" width="456" height="456" rx="108" fill="url(#brand)"/>
+  <path
+    d="M112 116
+       C112 91 132 72 157 72
+       C235 72 266 124 292 171
+       C318 218 349 257 400 272
+       L400 294
+       L112 294 Z"
+    fill="#F8FAFC"/>
+  <path d="M112 294H400V402C400 423 383 440 362 440H150C129 440 112 423 112 402Z" fill="#F8FAFC"/>
+  <path d="M112 294H400" stroke="#5A49D7" stroke-width="12"/>
+  <path d="M169 294V440M227 294V440M285 294V440M343 294V440" stroke="#6455DE" stroke-width="9"/>
+  <path d="M145 294H190V374C190 386 181 395 169 395H166C154 395 145 386 145 374Z" fill="#171C2D"/>
+  <path d="M203 294H248V374C248 386 239 395 227 395H224C212 395 203 386 203 374Z" fill="#171C2D"/>
+  <path d="M319 294H364V374C364 386 355 395 343 395H340C328 395 319 386 319 374Z" fill="#171C2D"/>
+</svg>
