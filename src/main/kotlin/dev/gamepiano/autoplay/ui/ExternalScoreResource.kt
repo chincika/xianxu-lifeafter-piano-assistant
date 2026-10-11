@@ -32,8 +32,13 @@ internal enum class ExternalScoreResource(
 internal fun openExternalScoreResource(
     resource: ExternalScoreResource,
     browse: (URI) -> Unit = ::browseInSystemBrowser,
-): Result<URI> = runCatching {
-    val uri = URI(resource.url)
+): Result<URI> = openExternalUri(resource.url, browse)
+
+internal fun openBugReport(browse: (URI) -> Unit = ::browseInSystemBrowser): Result<URI> =
+    openExternalUri("https://github.com/chincika/xianxu-lifeafter-piano-assistant/issues/new?template=bug_report.yml", browse)
+
+private fun openExternalUri(url: String, browse: (URI) -> Unit): Result<URI> = runCatching {
+    val uri = URI(url)
     require(uri.scheme == "https" && !uri.host.isNullOrBlank()) {
         "外部链接必须使用 HTTPS"
     }

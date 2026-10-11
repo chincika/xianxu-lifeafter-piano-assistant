@@ -65,6 +65,8 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import dev.gamepiano.autoplay.application.GamePlaybackCoordinator
+import dev.gamepiano.autoplay.app.APP_VERSION
+import dev.gamepiano.autoplay.diagnostics.AppDiagnostics
 import dev.gamepiano.autoplay.application.LocalMidiLibraryPreferences
 import dev.gamepiano.autoplay.application.LocalMidiLibraryScanner
 import dev.gamepiano.autoplay.application.LocalMidiTrack
@@ -77,6 +79,7 @@ import dev.gamepiano.autoplay.audio.AudioEngineAvailability
 import dev.gamepiano.autoplay.audio.AudioTranscriptionMode
 import dev.gamepiano.autoplay.audio.AudioTranscriptionService
 import dev.gamepiano.autoplay.input.windows.ForegroundTarget
+import dev.gamepiano.autoplay.input.windows.LifeAfterProcessNames
 import dev.gamepiano.autoplay.input.windows.ForegroundWindowSnapshot
 import dev.gamepiano.autoplay.input.windows.WindowsForegroundWindowInspector
 import dev.gamepiano.autoplay.input.windows.WindowsStartHotkeyMonitor
@@ -103,8 +106,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JFileChooser
 import javax.swing.UIManager
-
-private const val APP_VERSION = "0.1.0-beta.5"
 
 fun launchDesktopApp() = application {
     val windowState = rememberWindowState(width = 1_260.dp, height = 840.dp)
@@ -137,6 +138,14 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
             Thread(task, "game-piano-song-loader").apply { isDaemon = true }
         }
     }
+    val diagnosticWorker = remember {
+        Executors.newSingleThreadExecutor { task ->
+            Thread(task, "xianxu-diagnostic-actions").apply { isDaemon = true }
+        }
+    }
+    var diagnosticSnapshot by remember { mutableStateOf(AppDiagnostics.log.snapshot()) }
+    var diagnosticsBusy by remember { mutableStateOf(false) }
+    var diagnosticsMessage by remember { mutableStateOf("") }
 
     var selectedPath by remember { mutableStateOf<Path?>(null) }
     var plan by remember { mutableStateOf<SongPlan?>(null) }
@@ -145,7 +154,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
     var g3LowestMidi by remember { mutableIntStateOf(54) }
     var tapDurationMillis by remember { mutableLongStateOf(0L) }
     var mouseInputMode by remember { mutableStateOf(MouseInputMode.WINDOW_MESSAGE_EXPERIMENTAL) }
-    var processName by remember { mutableStateOf("lifeafter.exe") }
+    var processName by remember { mutableStateOf(LifeAfterProcessNames.DEFAULT) }
     var titleContains by remember { mutableStateOf("") }
     var foregroundWindow by remember { mutableStateOf<ForegroundWindowSnapshot?>(null) }
     var playbackStatus by remember { mutableStateOf<PlaybackStatus>(PlaybackStatus.Idle) }
@@ -198,6 +207,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
             PerformanceMode.PIANO_88_MOUSE -> "正在解析 MIDI 与生成 88 键原音高映射…"
             PerformanceMode.KEYBOARD_23 -> "正在解析 MIDI 与生成 23 键映射…"
         }
+        AppDiagnostics.event("midi.prepare_start", mapOf("inputPath" to path, "mode" to nextPerformanceMode, "range" to nextRange, "g3LowestMidi" to nextG3Lowest))
         worker.submit {
             val result = runCatching {
                 val calibration = RangeCalibration.fromCenterRangeLowest(nextG3Lowest)
@@ -221,8 +231,14 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
                 } else {
                     null
                 }
+                AppDiagnostics.event("midi.prepare_complete", mapOf(
+                    "notes" to prepared.score.notes.size, "batches" to prepared.batches.size,
+                    "durationMicros" to prepared.score.durationMicros, "playable" to prepared.playable,
+                ))
+                previewFailure?.let { AppDiagnostics.event("preview.load_failed", error = it) }
                 prepared to previewFailure
             }
+            result.exceptionOrNull()?.let { AppDiagnostics.event("midi.prepare_failed", error = it) }
             EventQueue.invokeLater {
                 if (generation != loadGeneration) return@invokeLater
                 loading = false
@@ -299,6 +315,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
                     EventQueue.invokeLater { message = progress }
                 }
             }
+            result.exceptionOrNull()?.let { AppDiagnostics.event("audio.transcribe_failed", error = it) }
             EventQueue.invokeLater {
                 transcribing = false
                 result.fold(
@@ -332,6 +349,10 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
         message = "正在扫描本地音乐库…"
         worker.submit {
             val result = runCatching { libraryScanner.scan(root) }
+            result.fold(
+                onSuccess = { AppDiagnostics.event("library.scan_complete", mapOf("folderPath" to root, "tracks" to it.size)) },
+                onFailure = { AppDiagnostics.event("library.scan_failed", error = it) },
+            )
             EventQueue.invokeLater {
                 libraryLoading = false
                 result.fold(
@@ -472,6 +493,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
     }
 
     fun togglePreview() {
+        AppDiagnostics.event("preview.toggle_requested")
         if (playbackStatus is PlaybackStatus.Countdown ||
             playbackStatus is PlaybackStatus.Playing ||
             playbackStatus is PlaybackStatus.Paused ||
@@ -491,6 +513,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
             }
             previewSnapshot = previewPlayer.snapshot()
         }.onFailure { throwable ->
+            AppDiagnostics.event("preview.failed", error = throwable)
             message = "无法试听：${throwable.message ?: "系统 MIDI 设备错误"}"
         }
     }
@@ -600,6 +623,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
     }
 
     fun seekTimeline(positionMicros: Long, commit: Boolean) {
+        if (commit) AppDiagnostics.event("playback.seek", mapOf("positionMicros" to positionMicros))
         val duration = plan?.score?.durationMicros ?: previewSnapshot.durationMicros
         val position = positionMicros.coerceIn(0L, duration.coerceAtLeast(0L))
         val activePlayback = playbackStatus is PlaybackStatus.Countdown ||
@@ -624,6 +648,55 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
     }
 
     val pollerRunning = remember { AtomicBoolean(true) }
+    fun toggleDiagnostics() {
+        if (diagnosticsBusy) return
+        val next = !diagnosticSnapshot.enabled
+        diagnosticsBusy = true
+        diagnosticWorker.submit {
+            val result = runCatching {
+                AppDiagnostics.log.setEnabled(next)
+                if (next) AppDiagnostics.resetObservedStates()
+            }
+            EventQueue.invokeLater {
+                diagnosticSnapshot = AppDiagnostics.log.snapshot()
+                diagnosticsBusy = false
+                diagnosticsMessage = result.fold(
+                    onSuccess = { if (next) "日志已开启，请复现问题后导出。" else "已停止记录，已有日志仍可导出。" },
+                    onFailure = { "无法切换日志：${it.message ?: "未知错误"}" },
+                )
+            }
+        }
+    }
+
+    fun exportDiagnostics() {
+        if (diagnosticsBusy) return
+        val destination = runCatching { chooseDiagnosticZip(owner) }.getOrElse {
+            diagnosticsMessage = "无法打开保存窗口：${it.message}"
+            return
+        } ?: return
+        diagnosticsBusy = true
+        diagnosticsMessage = "正在打包诊断日志…"
+        diagnosticWorker.submit {
+            val result = runCatching { AppDiagnostics.log.exportZip(destination) }
+            EventQueue.invokeLater {
+                diagnosticsBusy = false
+                diagnosticsMessage = result.fold(
+                    onSuccess = { "已导出到 $it；检查内容后，可在 GitHub 反馈中手动附加此 ZIP。" },
+                    onFailure = { "导出失败：${it.message ?: "未知错误"}" },
+                )
+            }
+        }
+    }
+
+    LaunchedEffect(diagnosticSnapshot.enabled, processName, titleContains, performanceMode, mouseInputMode, range, g3LowestMidi, tapDurationMillis, audioAvailability) {
+        AppDiagnostics.state("app.configuration", mapOf(
+            "mode" to performanceMode, "mouseMode" to mouseInputMode,
+            "process" to processName, "titleFilterEnabled" to titleContains.isNotBlank(),
+            "range" to range, "g3LowestMidi" to g3LowestMidi, "tapMillis" to tapDurationMillis,
+            "audioAvailable" to audioAvailability.available, "separationAvailable" to audioAvailability.sourceSeparationAvailable,
+            "notes" to plan?.score?.notes?.size, "durationMicros" to plan?.score?.durationMicros,
+        ))
+    }
     DisposableEffect(Unit) {
         val startHotkeyMonitor = runCatching {
             WindowsStartHotkeyMonitor {
@@ -631,7 +704,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
                     if (!coordinator.isRunning()) startPlayback()
                 }
             }.start()
-        }.getOrNull()
+        }.onFailure { AppDiagnostics.event("hotkey.start_failed", error = it) }.getOrNull()
         worker.submit {
             val availability = audioTranscriber.availability()
             EventQueue.invokeLater {
@@ -641,8 +714,14 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
         libraryFolder?.let(::refreshLibrary)
         val poller = Thread({
             while (pollerRunning.get()) {
-                val snapshot = runCatching(inspector::current).getOrNull()
-                EventQueue.invokeLater { foregroundWindow = snapshot }
+                val snapshot = runCatching(inspector::current)
+                    .onFailure { AppDiagnostics.event("window.inspect_failed", error = it) }.getOrNull()
+                AppDiagnostics.state("window.foreground", mapOf("pid" to snapshot?.processId, "process" to snapshot?.processName, "handle" to snapshot?.handle))
+                val logSnapshot = AppDiagnostics.log.snapshot()
+                EventQueue.invokeLater {
+                    foregroundWindow = snapshot
+                    diagnosticSnapshot = logSnapshot
+                }
                 try {
                     Thread.sleep(500)
                 } catch (_: InterruptedException) {
@@ -676,6 +755,7 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
             previewPlayer.close()
             audioTranscriber.close()
             worker.shutdownNow()
+            diagnosticWorker.shutdown()
         }
     }
 
@@ -722,6 +802,9 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
         librarySearch = librarySearch,
         libraryLoop = libraryLoop,
         libraryAutoNext = libraryAutoNext,
+        diagnostics = diagnosticSnapshot,
+        diagnosticsBusy = diagnosticsBusy,
+        diagnosticsMessage = diagnosticsMessage,
     )
     val modernActions = ModernWorkbenchActions(
         chooseMidi = ::chooseMidi,
@@ -768,6 +851,14 @@ private fun PianoWorkbench(owner: AwtWindow, onExit: () -> Unit) {
                 ThemeMode.DARK -> ThemeMode.LIGHT
                 ThemeMode.LIGHT -> ThemeMode.SYSTEM
             }
+        },
+        toggleDiagnostics = ::toggleDiagnostics,
+        exportDiagnostics = ::exportDiagnostics,
+        openBugReport = {
+            openBugReport().fold(
+                onSuccess = { diagnosticsMessage = "请填写复现步骤，并手动附加导出的日志 ZIP；程序不会自动上传。" },
+                onFailure = { diagnosticsMessage = "无法打开反馈页面：${it.message}" },
+            )
         },
     )
 
@@ -2425,6 +2516,23 @@ private fun chooseDirectory(owner: AwtWindow, initialDirectory: Path?): Path? {
         ?.toPath()
         ?.toAbsolutePath()
         ?.normalize()
+}
+
+private fun chooseDiagnosticZip(owner: AwtWindow): Path? {
+    val dialog = when (owner) {
+        is Frame -> FileDialog(owner, "导出诊断日志 ZIP", FileDialog.SAVE)
+        is Dialog -> FileDialog(owner, "导出诊断日志 ZIP", FileDialog.SAVE)
+        else -> FileDialog(null as Frame?, "导出诊断日志 ZIP", FileDialog.SAVE)
+    }
+    dialog.file = "xianxu-diagnostics-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}.zip"
+    return try {
+        dialog.isVisible = true
+        dialog.files.firstOrNull()?.toPath()?.let {
+            if (it.fileName.toString().endsWith(".zip", true)) it else it.resolveSibling("${it.fileName}.zip")
+        }
+    } finally {
+        dialog.dispose()
+    }
 }
 
 private fun chooseNativeFile(owner: AwtWindow, title: String, extensions: Set<String>): Path? {

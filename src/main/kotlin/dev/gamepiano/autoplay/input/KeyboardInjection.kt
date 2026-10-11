@@ -1,6 +1,7 @@
 package dev.gamepiano.autoplay.input
 
 import dev.gamepiano.autoplay.model.GameKey
+import dev.gamepiano.autoplay.diagnostics.AppDiagnostics
 import dev.gamepiano.autoplay.playback.InputSink
 
 enum class ScanCodeAction {
@@ -128,6 +129,10 @@ class ScanCodeInputSink(
 
     private fun sendOrThrow(strokes: List<ScanCodeStroke>) {
         val result = gateway.send(strokes)
+        AppDiagnostics.event("input.keyboard_send", mapOf(
+            "strokes" to strokes, "sent" to result.sent, "expected" to result.expected,
+            "win32Error" to result.nativeErrorCode,
+        ))
         if (!result.successful) {
             val error = result.nativeErrorCode?.let { ", Win32 error=$it" }.orEmpty()
             throw KeyboardInjectionException(

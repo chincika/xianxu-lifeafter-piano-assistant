@@ -1,6 +1,7 @@
 package dev.gamepiano.autoplay.app
 
 import dev.gamepiano.autoplay.adapter.LifeAfterPianoProfile
+import dev.gamepiano.autoplay.diagnostics.AppDiagnostics
 import dev.gamepiano.autoplay.application.SongPlanService
 import dev.gamepiano.autoplay.audio.AudioTranscriptionMode
 import dev.gamepiano.autoplay.audio.AudioTranscriptionService
@@ -25,6 +26,12 @@ import dev.gamepiano.autoplay.ui.launchDesktopApp
 import java.nio.file.Path
 
 fun main(args: Array<String>) {
+    val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+        AppDiagnostics.event("app.uncaught_exception", mapOf("failedThread" to thread.name), error)
+        if (previousHandler != null) previousHandler.uncaughtException(thread, error) else error.printStackTrace()
+    }
+    Runtime.getRuntime().addShutdownHook(Thread({ AppDiagnostics.log.close() }, "xianxu-diagnostic-shutdown"))
     if (args.isEmpty()) {
         launchDesktopApp()
         return

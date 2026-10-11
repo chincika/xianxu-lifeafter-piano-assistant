@@ -7,7 +7,6 @@ import com.sun.jna.platform.win32.User32
 import com.sun.jna.ptr.IntByReference
 import dev.gamepiano.autoplay.input.KeyboardInjectionException
 import dev.gamepiano.autoplay.input.PlaybackInputGuard
-import java.nio.file.Path
 
 data class ForegroundWindowSnapshot(
     val handle: Long,
@@ -15,6 +14,16 @@ data class ForegroundWindowSnapshot(
     val processName: String?,
     val title: String,
 )
+
+/** Executable aliases of the supported LifeAfter clients, excluding launchers. */
+internal object LifeAfterProcessNames {
+    const val DEFAULT = "lifeafter.exe"
+    val executables = listOf(DEFAULT, "mingrizhihou.exe")
+    private val normalized = executables.mapNotNull(::normalizeProcessName)
+
+    fun contains(normalizedName: String?): Boolean = normalizedName != null &&
+        normalized.any { it.equals(normalizedName, ignoreCase = true) }
+}
 
 data class ForegroundTarget(
     val processName: String? = null,
@@ -27,15 +36,26 @@ data class ForegroundTarget(
     }
 
     fun matches(window: ForegroundWindowSnapshot): Boolean {
+        val expectedName = normalizeProcessName(processName)
+        val actualName = normalizeProcessName(window.processName)
         val processMatches = processName.isNullOrBlank() ||
-            processName.equals(window.processName, ignoreCase = true)
+            (expectedName != null && actualName != null && (
+                expectedName.equals(actualName, ignoreCase = true) ||
+                    (LifeAfterProcessNames.contains(expectedName) && LifeAfterProcessNames.contains(actualName))
+                ))
         val titleMatches = titleContains.isNullOrBlank() ||
             window.title.contains(titleContains, ignoreCase = true)
         return processMatches && titleMatches
     }
 
     fun description(): String = buildList {
-        processName?.takeIf(String::isNotBlank)?.let { add("process=$it") }
+        processName?.takeIf(String::isNotBlank)?.let {
+            add(if (LifeAfterProcessNames.contains(normalizeProcessName(it))) {
+                "process in [${LifeAfterProcessNames.executables.joinToString()}]"
+            } else {
+                "process=$it"
+            })
+        }
         titleContains?.takeIf(String::isNotBlank)?.let { add("title contains '$it'") }
     }.joinToString(", ")
 }
@@ -45,21 +65,20 @@ fun interface ForegroundWindowInspector {
 }
 
 class WindowsForegroundWindowInspector : ForegroundWindowInspector {
+    private val processNames = WindowsProcessNameResolver()
+
     override fun current(): ForegroundWindowSnapshot? {
         if (!Platform.isWindows()) return null
         val window = User32.INSTANCE.GetForegroundWindow() ?: return null
         val processId = IntByReference()
-        User32.INSTANCE.GetWindowThreadProcessId(window, processId)
+        if (User32.INSTANCE.GetWindowThreadProcessId(window, processId) == 0 || processId.value <= 0) {
+            return null
+        }
 
         val titleBuffer = CharArray(1_024)
         User32.INSTANCE.GetWindowText(window, titleBuffer, titleBuffer.size)
         val title = Native.toString(titleBuffer)
-        val command = ProcessHandle.of(processId.value.toLong())
-            .flatMap { process -> process.info().command() }
-            .orElse(null)
-        val processName = command?.let { fullPath ->
-            runCatching { Path.of(fullPath).fileName.toString() }.getOrNull()
-        }
+        val processName = processNames.resolve(processId.value)
 
         return ForegroundWindowSnapshot(
             handle = Pointer.nativeValue(window.pointer),

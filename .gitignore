@@ -1,6 +1,7 @@
 .gradle/
 .kotlin/
 .idea/
+.tools/
 **/build/
 release/artifacts/
 release/review/

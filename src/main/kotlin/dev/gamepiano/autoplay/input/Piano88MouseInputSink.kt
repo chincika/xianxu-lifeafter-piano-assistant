@@ -1,6 +1,7 @@
 package dev.gamepiano.autoplay.input
 
 import dev.gamepiano.autoplay.input.windows.ForegroundTarget
+import dev.gamepiano.autoplay.diagnostics.AppDiagnostics
 import dev.gamepiano.autoplay.input.windows.ForegroundWindowInspector
 import dev.gamepiano.autoplay.input.windows.WindowsForegroundGuard
 import dev.gamepiano.autoplay.model.GameKey
@@ -56,15 +57,21 @@ class Piano88MouseInputSink(
         val window = guard.requireReadyWindow()
         val area = areaProvider.get(window.handle)
             ?: throw MouseInjectionException("Cannot read the foreground game client area")
+        AppDiagnostics.state("input.client_area", mapOf("handle" to window.handle, "area" to area))
         uniqueKeys.forEach { key ->
             require(key.index in 0 until Piano88Layout.KEY_COUNT) {
                 "88-key mouse index must be in 0..${Piano88Layout.KEY_COUNT - 1}: ${key.index}"
             }
+            val point = Piano88MouseGeometry.pointForKey(key.index, area)
             val result = gateway.click(
                 windowHandle = window.handle,
-                point = Piano88MouseGeometry.pointForKey(key.index, area),
+                point = point,
                 area = area,
             )
+            AppDiagnostics.event("input.mouse_click", mapOf(
+                "keyIndex" to key.index, "point" to point, "sent" to result.sent,
+                "expected" to result.expected, "win32Error" to result.nativeErrorCode,
+            ))
             if (!result.successful) {
                 val error = result.nativeErrorCode?.let { ", Win32 error=$it" }.orEmpty()
                 throw MouseInjectionException(

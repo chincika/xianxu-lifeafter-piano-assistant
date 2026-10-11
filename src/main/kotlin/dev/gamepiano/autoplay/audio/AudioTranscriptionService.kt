@@ -1,5 +1,7 @@
 package dev.gamepiano.autoplay.audio
 
+import dev.gamepiano.autoplay.diagnostics.AppDiagnostics
+
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -92,6 +94,10 @@ class AudioTranscriptionService(
             )
         }
         if (availability.available) cachedAvailability = availability
+        AppDiagnostics.event("audio.availability", mapOf(
+            "available" to availability.available, "separation" to availability.sourceSeparationAvailable,
+            "probeExit" to probe.exitCode, "probeOutput" to probe.output,
+        ))
         return availability
     }
 
@@ -100,6 +106,7 @@ class AudioTranscriptionService(
         mode: AudioTranscriptionMode = AudioTranscriptionMode.MELODY_WITH_CHORDS,
         onProgress: (String) -> Unit = {},
     ): AudioTranscriptionResult {
+        AppDiagnostics.event("audio.transcribe_start", mapOf("inputPath" to audioPath, "mode" to mode))
         require(Files.isRegularFile(audioPath)) { "Audio file does not exist: $audioPath" }
         val python = findPython()
             ?: throw AudioTranscriptionException("未安装音频引擎，请先运行音频组件安装脚本")
@@ -128,6 +135,7 @@ class AudioTranscriptionService(
         try {
             process.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
                 lines.forEach { line ->
+                    AppDiagnostics.event("audio.worker", mapOf("output" to line))
                     if (log.size == 30) log.removeFirst()
                     log.addLast(line)
                     when {
@@ -137,6 +145,7 @@ class AudioTranscriptionService(
                 }
             }
             val exitCode = process.waitFor()
+            AppDiagnostics.event("audio.worker_exit", mapOf("exitCode" to exitCode))
             if (exitCode != 0 || !Files.isRegularFile(output)) {
                 throw AudioTranscriptionException(
                     "音频转写失败（exit=$exitCode）：${log.takeLast(8).joinToString(" / ")}",
@@ -147,6 +156,10 @@ class AudioTranscriptionService(
         }
 
         val summary = AudioWorkerSummary.parse(resultLine.orEmpty())
+        AppDiagnostics.event("audio.transcribe_complete", mapOf(
+            "notes" to summary.noteCount, "bpm" to summary.estimatedBpm,
+            "separated" to summary.usedSourceSeparation,
+        ))
         return AudioTranscriptionResult(
             midiPath = output,
             noteCount = summary.noteCount,
@@ -156,6 +169,7 @@ class AudioTranscriptionService(
     }
 
     fun cancel() {
+        if (activeProcess != null) AppDiagnostics.event("audio.cancel_requested")
         activeProcess?.destroy()
         activeProcess?.waitFor(2, TimeUnit.SECONDS)
         activeProcess?.takeIf(Process::isAlive)?.destroyForcibly()

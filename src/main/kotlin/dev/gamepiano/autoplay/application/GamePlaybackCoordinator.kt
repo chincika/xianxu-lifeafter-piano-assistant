@@ -1,6 +1,7 @@
 package dev.gamepiano.autoplay.application
 
 import dev.gamepiano.autoplay.input.KeyboardGateway
+import dev.gamepiano.autoplay.diagnostics.AppDiagnostics
 import dev.gamepiano.autoplay.input.MouseGateway
 import dev.gamepiano.autoplay.input.Piano88MouseInputSink
 import dev.gamepiano.autoplay.input.ScanCodeInputSink
@@ -79,6 +80,13 @@ class GamePlaybackCoordinator(
 
         synchronized(lock) {
             check(playbackThread?.isAlive != true) { "Playback is already running" }
+            AppDiagnostics.event("playback.start", mapOf(
+                "mode" to plan.performanceMode, "mouseMode" to mouseInputMode,
+                "targetProcess" to target.processName, "titleFilterEnabled" to !target.titleContains.isNullOrBlank(),
+                "startMicros" to plan.playbackStartMicros, "durationMicros" to plan.score.durationMicros,
+                "batches" to plan.batches.size, "tapMillis" to tapDurationMillis,
+                "countdownSeconds" to countdownSeconds,
+            ))
             cancellationRequested = false
             targetReady = true
             statusCallback = onStatus
@@ -99,6 +107,7 @@ class GamePlaybackCoordinator(
     }
 
     fun stop() {
+        if (isRunning()) AppDiagnostics.event("playback.stop_requested")
         cancellationRequested = true
         synchronized(lock) { engine }?.stop()
     }
@@ -109,6 +118,7 @@ class GamePlaybackCoordinator(
         }
         playbackEngine ?: return null
         val paused = playbackEngine.togglePaused() ?: return null
+        AppDiagnostics.event("playback.pause_toggled", mapOf("paused" to paused))
         if (paused) runCatching { sink?.releaseAll() }
         val ready = synchronized(lock) { targetReady }
         callback?.invoke(
@@ -131,22 +141,33 @@ class GamePlaybackCoordinator(
         onStatus: (PlaybackStatus) -> Unit,
     ) {
         var hotkeyMonitor: AutoCloseable? = null
+        val status: (PlaybackStatus) -> Unit = { value ->
+            AppDiagnostics.event("playback.status", mapOf("status" to value))
+            onStatus(value)
+        }
         try {
             for (second in countdownSeconds downTo 1) {
-                onStatus(PlaybackStatus.Countdown(second))
+                status(PlaybackStatus.Countdown(second))
                 if (waitOneSecondOrCancelled()) {
-                    onStatus(PlaybackStatus.Stopped)
+                    status(PlaybackStatus.Stopped)
                     return
                 }
             }
             if (cancellationRequested) {
-                onStatus(PlaybackStatus.Stopped)
+                status(PlaybackStatus.Stopped)
                 return
             }
 
             val guard = WindowsForegroundGuard(inspector, target)
             val isTargetReady = {
-                inspector.current()?.let(target::matches) == true
+                val current = inspector.current()
+                val ready = current?.let(target::matches) == true
+                AppDiagnostics.state("playback.target", mapOf(
+                    "ready" to ready, "process" to current?.processName, "pid" to current?.processId,
+                    "handle" to current?.handle, "titleFilterEnabled" to !target.titleContains.isNullOrBlank(),
+                    "titleMatches" to (current != null && (target.titleContains.isNullOrBlank() || current.title.contains(target.titleContains, true))),
+                ))
+                ready
             }
             val delegateSink: InputSink = when (plan.performanceMode) {
                 PerformanceMode.KEYBOARD_23 -> ScanCodeInputSink(gatewayFactory(), guard)
@@ -170,7 +191,8 @@ class GamePlaybackCoordinator(
             }
             hotkeyMonitor = hotkeyMonitorFactory(::stop) { togglePause() }
 
-            onStatus(if (initiallyReady) PlaybackStatus.Playing else PlaybackStatus.WaitingForTarget)
+            status(if (initiallyReady) PlaybackStatus.Playing else PlaybackStatus.WaitingForTarget)
+            var lastLoggedSecond = -1L
             val report = playbackEngine.play(
                 plan.batches,
                 sink,
@@ -178,7 +200,7 @@ class GamePlaybackCoordinator(
                 durationMicros = plan.remainingDurationMicros,
                 readinessProbe = isTargetReady,
                 onReadinessChange = { ready ->
-                    val status = synchronized(lock) {
+                    val nextStatus = synchronized(lock) {
                         targetReady = ready
                         when {
                             !ready -> PlaybackStatus.WaitingForTarget
@@ -187,9 +209,14 @@ class GamePlaybackCoordinator(
                         }
                     }
                     if (!ready) runCatching(sink::releaseAll)
-                    onStatus(status)
+                    status(nextStatus)
                 },
                 onProgress = { relativePosition ->
+                    val second = relativePosition / 1_000_000
+                    if (second != lastLoggedSecond) {
+                        lastLoggedSecond = second
+                        AppDiagnostics.event("playback.progress", mapOf("positionMicros" to plan.playbackStartMicros + relativePosition))
+                    }
                     onProgress(
                         PlaybackProgress(
                             positionMicros = (plan.playbackStartMicros + relativePosition)
@@ -199,9 +226,10 @@ class GamePlaybackCoordinator(
                     )
                 },
             )
-            onStatus(if (report.cancelled) PlaybackStatus.Stopped else PlaybackStatus.Completed(report))
+            status(if (report.cancelled) PlaybackStatus.Stopped else PlaybackStatus.Completed(report))
         } catch (throwable: Throwable) {
-            onStatus(PlaybackStatus.Failed(throwable.message ?: throwable::class.simpleName.orEmpty()))
+            AppDiagnostics.event("playback.failed", error = throwable)
+            status(PlaybackStatus.Failed(throwable.message ?: throwable::class.simpleName.orEmpty()))
         } finally {
             hotkeyMonitor?.close()
             runCatching { synchronized(lock) { activeSink }?.releaseAll() }

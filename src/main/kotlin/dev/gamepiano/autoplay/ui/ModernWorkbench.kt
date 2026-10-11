@@ -54,6 +54,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -106,6 +108,9 @@ internal data class ModernWorkbenchState(
     val librarySearch: String,
     val libraryLoop: Boolean,
     val libraryAutoNext: Boolean,
+    val diagnostics: dev.gamepiano.autoplay.diagnostics.DiagnosticSnapshot = dev.gamepiano.autoplay.diagnostics.DiagnosticSnapshot(),
+    val diagnosticsBusy: Boolean = false,
+    val diagnosticsMessage: String = "",
 )
 
 internal data class ModernWorkbenchActions(
@@ -140,6 +145,9 @@ internal data class ModernWorkbenchActions(
     val toggleLibraryLoop: () -> Unit,
     val toggleLibraryAutoNext: () -> Unit,
     val cycleThemeMode: () -> Unit,
+    val toggleDiagnostics: () -> Unit = {},
+    val exportDiagnostics: () -> Unit = {},
+    val openBugReport: () -> Unit = {},
 )
 
 private enum class WorkbenchPage(val label: String, val subtitle: String, val glyph: Glyph) {
@@ -339,7 +347,7 @@ private fun Sidebar(
         }
         Spacer(Modifier.weight(1f))
         StatusStrip(
-            text = if (targetMatches) "游戏已连接" else "等待游戏窗口",
+            text = if (targetMatches) "游戏在前台" else "等待游戏前台",
             positive = targetMatches,
         )
         Spacer(Modifier.height(8.dp))
@@ -381,9 +389,9 @@ private fun PageHeader(
         val status = when (state.playbackStatus) {
             PlaybackStatus.Playing -> "正在演奏"
             PlaybackStatus.Paused -> "演奏已暂停"
-            PlaybackStatus.WaitingForTarget -> "等待游戏窗口"
+            PlaybackStatus.WaitingForTarget -> "等待游戏前台"
             is PlaybackStatus.Countdown -> "${state.playbackStatus.secondsRemaining} 秒后开始"
-            else -> if (state.targetMatches) "游戏已连接" else "尚未连接"
+            else -> if (state.targetMatches) "游戏在前台" else "等待游戏前台"
         }
         StatusStrip(
             text = status,
@@ -1256,7 +1264,7 @@ private fun TargetSummary(state: ModernWorkbenchState, modifier: Modifier) {
                     Text("明日之后", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
                     Text(state.processName.ifBlank { "未设置进程" }, fontSize = 10.sp, color = palette.textTertiary)
                 }
-                StatusStrip(if (state.targetMatches) "已连接" else "等待中", state.targetMatches)
+                StatusStrip(if (state.targetMatches) "前台就绪" else "等待前台", state.targetMatches)
             }
         }
     }
@@ -1671,7 +1679,7 @@ private fun SettingsPage(state: ModernWorkbenchState, actions: ModernWorkbenchAc
                 }
             }
         }
-        SectionTitle("目标窗口", "只有匹配目标游戏窗口时才会发送输入")
+        SectionTitle("目标窗口", "默认兼容 lifeafter.exe / mingrizhihou.exe；切回游戏后匹配前台窗口")
         MicaCard {
             Row(
                 Modifier.fillMaxWidth().padding(18.dp),
@@ -1715,7 +1723,7 @@ private fun SettingsPage(state: ModernWorkbenchState, actions: ModernWorkbenchAc
 }
 
 @Composable
-private fun SafetyPage(state: ModernWorkbenchState, actions: ModernWorkbenchActions) {
+internal fun SafetyPage(state: ModernWorkbenchState, actions: ModernWorkbenchActions) {
     val palette = LocalFluentPalette.current
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
@@ -1727,6 +1735,43 @@ private fun SafetyPage(state: ModernWorkbenchState, actions: ModernWorkbenchActi
                 HotkeyRow("F7", "开始演奏 / 从保留断点继续")
                 HotkeyRow("F9", "暂停或继续当前演奏")
                 HotkeyRow("F8", "紧急停止并释放全部按键")
+            }
+        }
+        SectionTitle("诊断日志", "测试时开启，重启后自动关闭")
+        MicaCard {
+            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("记录详细诊断日志", fontSize = 14.sp, color = palette.textPrimary, fontWeight = FontWeight.SemiBold)
+                        Text("窗口识别 · 演奏与转谱 · 错误详情", fontSize = 12.sp, color = palette.textSecondary)
+                    }
+                    androidx.compose.material.Switch(
+                        checked = state.diagnostics.enabled,
+                        onCheckedChange = { actions.toggleDiagnostics() },
+                        enabled = !state.diagnosticsBusy,
+                        modifier = Modifier.semantics { contentDescription = "记录详细诊断日志" },
+                        colors = androidx.compose.material.SwitchDefaults.colors(checkedThumbColor = palette.accent),
+                    )
+                }
+                val captureStatus = when {
+                    state.diagnosticsBusy -> "正在处理…"
+                    state.diagnostics.error != null -> "记录异常：${state.diagnostics.error}"
+                    state.diagnostics.enabled -> "正在记录 · ${state.diagnostics.recordedEvents} 条事件"
+                    state.diagnostics.canExport -> "已停止记录 · 已有 ${state.diagnostics.recordedEvents} 条事件可导出"
+                    else -> "未开启 · 暂无日志"
+                }
+                Text(captureStatus, fontSize = 12.sp, color = if (state.diagnostics.enabled) palette.textPrimary else palette.textSecondary)
+                if (state.diagnostics.droppedEvents > 0) {
+                    Text("记录繁忙，已跳过 ${state.diagnostics.droppedEvents} 条事件，未阻塞演奏。", fontSize = 12.sp, color = palette.warning)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SecondaryButton("导出日志 ZIP", state.diagnostics.canExport && !state.diagnosticsBusy, actions.exportDiagnostics)
+                    SecondaryButton("GitHub 反馈", !state.diagnosticsBusy, actions.openBugReport)
+                }
+                Text("仅本地记录，不自动上传；分享前请检查日志内容。", fontSize = 12.sp, color = palette.textSecondary)
+                if (state.diagnosticsMessage.isNotBlank()) {
+                    Text(state.diagnosticsMessage, fontSize = 12.sp, color = palette.textPrimary)
+                }
             }
         }
         SectionTitle("游戏输入风险", "使用前请了解自动输入可能带来的账号风险")
@@ -2244,7 +2289,7 @@ private fun LineGlyph(glyph: Glyph, color: Color) {
 }
 
 @Composable
-private fun FluentTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
+internal fun FluentTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
     val palette = if (darkTheme) DarkPalette else LightPalette
     val colors = if (darkTheme) {
         darkColors(

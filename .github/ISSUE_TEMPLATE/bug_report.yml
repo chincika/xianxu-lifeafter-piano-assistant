@@ -7,7 +7,7 @@ body:
     id: version
     attributes:
       label: 程序版本
-      placeholder: v0.1.0-beta.3
+      placeholder: 请填写“帮助与安全”中显示的版本号
     validations:
       required: true
   - type: input
@@ -30,6 +30,11 @@ body:
       label: 预期结果与实际结果
     validations:
       required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断日志（可选）
+      description: 在“帮助与安全”开启诊断日志，复现问题后导出 ZIP。请先检查内容，再将 ZIP 拖到此处上传。日志默认关闭，重启后需重新开启，不会自动上传；不要附加音乐文件或账号信息。
   - type: textarea
     id: details
     attributes:
