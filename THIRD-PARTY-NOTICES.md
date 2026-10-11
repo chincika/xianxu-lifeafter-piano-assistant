@@ -4,7 +4,7 @@
 
 The Windows application package includes unmodified runtime libraries and their embedded license metadata, including:
 
-- Eclipse Temurin / OpenJDK 21 — GPLv2 with the Classpath Exception. The packaged runtime retains its `runtime/legal` notices.
+- Microsoft Build of OpenJDK 21 — GPLv2 with the Classpath Exception. The packaged runtime retains its `runtime/legal` notices.
 - Kotlin — Apache License 2.0.
 - Compose Multiplatform and related JetBrains/AndroidX runtime libraries — Apache License 2.0.
 - Java Native Access (JNA) — distributed under its available Apache License 2.0 terms; its JAR retains `META-INF/AL2.0`, `META-INF/LGPL2.1`, and `META-INF/LICENSE`.

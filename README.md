@@ -2,6 +2,8 @@
 
 一个面向游戏内乐器的学习型自动演奏项目。当前同时支持游戏的 88 键通用钢琴界面，以及带 `G1` 至 `G6` 六个音区的 23 键快捷键界面。
 
+[下载 v0.1.0-beta.6 测试版（Lite / Full）](https://github.com/chincika/xianxu-lifeafter-piano-assistant/releases/tag/v0.1.0-beta.6)。两个版本均自带 Java；Lite 适合直接播放 MIDI，Full 额外内置音频转谱与人声分离组件，无需另装 Python。请完整解压后运行程序。
+
 当前阶段已经实现桌面工作台、离线核心和受前台保护的 Windows 输入：
 
 - Win11 Fluent/Mica 风格的 Compose Desktop 工作台，提供跟随系统、深色、浅色三种主题；
